@@ -11,6 +11,7 @@ SET(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(WIN32)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /utf-8 /wd5033")
+    add_compile_definitions(NOMINMAX)
 endif()
 
 # find JUCE.
@@ -33,7 +34,7 @@ juce_add_binary_data(brightness_slider_assets
 		assets/reset.png)
 
 juce_add_gui_app(brightness_slider
-	PRODUCT_NAME "DDC/CI brightness control")
+	PRODUCT_NAME "Monitor brightness slider")
 set_target_properties(brightness_slider
 	PROPERTIES OUTPUT_NAME "Brightness control")
 
@@ -53,6 +54,7 @@ target_sources(brightness_slider
 target_link_libraries(brightness_slider
 	PRIVATE
 		brightness_slider_assets
+		juce::juce_gui_basics
 		juce::juce_gui_extra
 	PUBLIC
         juce::juce_recommended_config_flags

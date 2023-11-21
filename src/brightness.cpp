@@ -17,6 +17,7 @@ static constexpr uint8_t VCP_CONTRAST = 0x12;
 
 
 static const std::regex vcpRe("vcp\\(");
+static const std::regex mccsVerRe("mccs_ver\\(");
 static const std::regex hexRe("[0-9A-Z]+");
 
 
@@ -35,9 +36,16 @@ class MonitorControlImpl : public MonitorControl
     std::vector<physicalList> physicalMonitorLists;
     std::map<HANDLE, MonitorInfo> monitors;
 
+    Settings settings;
+
     float brightness = 0, contrast = 0;
     
 public:
+
+    MonitorControlImpl(Settings savedSettings)
+        :
+        settings(std::move(savedSettings))
+    {}
 
     virtual float getBrightness() override
     {
@@ -63,9 +71,39 @@ public:
     }
 
 
+    virtual void updateSettings(Settings && newSettings) override
+    {
+        settings = std::move(newSettings);
+
+        // handle new neutral contrast values
+        for (auto & m : monitors)
+        {
+            auto it = settings.savedNeutralContrast.find(m.second.name);
+            if (it != settings.savedNeutralContrast.end())
+            {
+                m.second.neutralContrast = it->second;
+            }
+        }
+
+        setContrast(contrast);
+    }
+
+
     virtual float getContrast() override
     {
         return contrast;
+    }
+
+
+    virtual float getMaxContrast() override
+    {
+        float maxC = 0;
+        for (auto & m : monitors)
+        {
+            maxC = std::max(maxC, (float) m.second.maxContrast / m.second.neutralContrast);
+        }
+        maxC = std::min(2.f, maxC);
+        return maxC;
     }
 
 
@@ -76,11 +114,12 @@ public:
         {
             if (m.second.doesContrast)
             {
-                int c = (int) std::round(v * m.second.maxContrast);
+                int c = (int) std::round(v * m.second.neutralContrast);
+                c = std::min(c, m.second.maxContrast);
                 if (c != m.second.currentContrast)
                 {
                     m.second.currentContrast = c;
-                    SetVCPFeature(m.first, VCP_CONTRAST, (DWORD) std::round(v * m.second.maxContrast));
+                    SetVCPFeature(m.first, VCP_CONTRAST, (DWORD) c);
                 }
             }
         }
@@ -127,14 +166,14 @@ public:
             {
                 const auto physicalMonitor = logicalMonitorData.list[i].hPhysicalMonitor;
 
-                auto pairIB = self->monitors.insert({physicalMonitor, MonitorInfo{}});
+                auto monitorPairIB = self->monitors.insert({physicalMonitor, MonitorInfo{}});
 
-                if (!pairIB.second)
+                if (!monitorPairIB.second)
                 {
                     continue;
                 }
 
-                MonitorInfo & info = pairIB.first->second;
+                MonitorInfo & info = monitorPairIB.first->second;
                 info.name = logicalMonitorData.list[i].szPhysicalMonitorDescription;
 
                 // Get and parse supported VCP codes.
@@ -150,8 +189,18 @@ public:
 
                 std::cmatch m;
 
-                // find "vcp("
+                // find "mccs_ver("
                 const char * capIt = capStr;
+                if (std::regex_search(capIt, m, mccsVerRe))
+                {
+                    capIt = m[0].second;
+                    const char *ver = capIt;
+                    while (*capIt && *capIt != ')') { ++capIt; }
+                    info.version = std::string(ver, capIt);
+                }
+
+                // find "vcp("
+                capIt = capStr;
                 if (std::regex_search(capIt, m, vcpRe))
                 {
                     // parsing loop
@@ -198,8 +247,14 @@ public:
                         assert(ok);
                         info.currentContrast = current;
                         info.maxContrast = max;
+
+                        // "neutral" contrast level depends on settings
+                        auto & defaultNeutral = self->settings.savedNeutralContrast;
+                        auto pairIB = defaultNeutral.insert({info.name, max});
+                        info.neutralContrast = pairIB.first->second;
+
                         if (self->contrast == 0) {
-                            self->contrast = (float) current / max;
+                            self->contrast = (float) current / info.neutralContrast;
                         }
                     }
                 }
@@ -223,9 +278,9 @@ public:
 };
 
 
-MonitorControl * MonitorControl::create()
+MonitorControl * MonitorControl::create(Settings && settings)
 {
-    MonitorControlImpl * impl = new MonitorControlImpl();
+    MonitorControlImpl * impl = new MonitorControlImpl(std::move(settings));
     impl->probe();
     return impl;
 }

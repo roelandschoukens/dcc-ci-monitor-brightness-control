@@ -36,7 +36,7 @@ public:
         setSize(250, 80);
         brightnessSlider.setRange(0, 1, 0.01);
         brightnessSlider.setTextBoxStyle(Slider::NoTextBox, false, 0, 0);
-        contrastSlider.setRange(0, 1, 0.01);
+        contrastSlider.setRange(0, mc->getMaxContrast(), 0.01);
         contrastSlider.setTextBoxStyle(Slider::NoTextBox, false, 0, 0);
 
         brightnessSlider.setValue(mc->getBrightness(), juce::dontSendNotification);
@@ -90,7 +90,7 @@ public:
     void buttonClicked(Button *b) override
     {
         if (b == &contrastButton) {
-            contrastSlider.setValue(.5, juce::sendNotificationAsync);
+            contrastSlider.setValue(1.0, juce::sendNotificationAsync);
         }
     }
 
@@ -138,25 +138,8 @@ public:
 };
 
 
-void showInfo()
-{
-    auto * mc = monitorcontrolInstance();
-    auto list = mc->monitorList();
-    juce::String text;
-    for (const auto & m : list)
-    {
-        if (text.isNotEmpty()) { text << "\n"; }
-
-        text << "Monitor: " << m.name.c_str() << "\n";
-        text << "  Brightness supported: " << (m.doesBrightness ? "Yes" : "No");
-        if (m.doesBrightness) { text << " (0 - " << m.maxBrightness << ")"; }
-        text << "\n";
-        text << "  Contrast supported: " << (m.doesContrast ? "Yes" : "No");
-        if (m.doesContrast) { text << " (0 - " << m.maxContrast << ")"; }
-        text << "\n";
-    }
-    juce::AlertWindow::showMessageBoxAsync(AlertWindow::NoIcon, "Monitor brightness control", text);
-}
+void showInfo();
+void editNeutralContrast();
 
 
 class OurSystemTrayIconComponent : public SystemTrayIconComponent
@@ -188,8 +171,9 @@ public:
         {
             PopupMenu m;
             m.addItem(1, "Info");
+            m.addItem(2, "Edit neutral contrast");
             m.addSeparator();
-            m.addItem(2, "Exit");
+            m.addItem(9, "Exit");
             m.showMenuAsync(PopupMenu::Options(), [](int result)
             {
                 switch (result)
@@ -199,6 +183,10 @@ public:
                         break;
 
                     case 2:
+                        editNeutralContrast();
+                        break;
+
+                    case 9:
                         JUCEApplication::quit();
                         break;
                 }
@@ -232,7 +220,25 @@ public:
     //==============================================================================
     void initialise (const String&) override
     {
-        monitorcontrol.reset(MonitorControl::create());
+        PropertiesFile::Options sOptions;
+        sOptions.applicationName = getApplicationName();
+        settings.setStorageParameters(sOptions);
+
+        MonitorControl::Settings mcSettings;
+        auto * userSettings = settings.getUserSettings();
+        if (userSettings)
+        {
+            for (int i = 0; i < 100; ++i)
+            {
+                const String monitorName = userSettings->getValue("monitorkey" + String(i));
+                if (monitorName.isEmpty()) break;
+
+                const int refContrast = userSettings->getIntValue("monitorRefContrast" + String(i));
+                mcSettings.savedNeutralContrast[monitorName.toUTF16().getAddress()] = refContrast;
+            }
+        }
+
+        monitorcontrol.reset(MonitorControl::create(std::move(mcSettings)));
 
         // look-and-feel (use the light one)
         lookAndFeel = std::make_unique<LookAndFeel_V3>();
@@ -279,9 +285,27 @@ public:
     }
 
 
+    static MonitorControlApplication & instance()
+    {
+        return *static_cast<MonitorControlApplication*>(JUCEApplication::getInstance());
+    }
+
+
+    static PropertiesFile * getUserSettings()
+    {
+        return instance().settings.getUserSettings();
+    }
+
+
     static MonitorControl * monitorcontrolInstance()
     {
-        return static_cast<MonitorControlApplication*>(JUCEApplication::getInstance())->monitorcontrol.get();
+        return instance().monitorcontrol.get();
+    }
+
+
+    static LookAndFeel & lookAndFeelInstance()
+    {
+        return *instance().lookAndFeel.get();
     }
 
 private:
@@ -295,6 +319,129 @@ private:
 MonitorControl * monitorcontrolInstance()
 {
     return MonitorControlApplication::monitorcontrolInstance();
+}
+
+
+// actions
+
+void showInfo()
+{
+    auto * mc = monitorcontrolInstance();
+    auto list = mc->monitorList();
+    juce::String text;
+    for (const auto & m : list)
+    {
+        if (text.isNotEmpty()) { text << "\n"; }
+
+        text << "Monitor: " << m.name.c_str() << "\n";
+        text << "  MCCS version: " << (m.version.empty() ? std::string(u8"—") : m.version) << "\n";
+        text << "  Brightness supported: " << (m.doesBrightness ? "Yes" : "No");
+        if (m.doesBrightness) { text << " (0 - " << m.maxBrightness << ")"; }
+        text << "\n";
+        text << "  Contrast supported: " << (m.doesContrast ? "Yes" : "No");
+        if (m.doesContrast)
+        {
+            text << " (0 - " << m.maxContrast << ") / " << m.neutralContrast;
+        }
+        text << "\n";
+    }
+    juce::AlertWindow::showMessageBoxAsync(AlertWindow::NoIcon, "Monitor brightness control", text);
+}
+
+
+void editNeutralContrast()
+{
+    auto * mc = monitorcontrolInstance();
+    mc->setContrast(1.0);
+    auto list = mc->monitorList();
+
+    class OurComponent : public Component, public Button::Listener
+    {
+    public:
+        Label infoLabel;
+        PropertyPanel propertyPanel;
+        TextButton applyBtn{"Apply", "Apply this contrast setting"};
+
+        // this one is sorted by name
+        std::map<std::wstring, std::pair<Value, int>> neutralContrastValues;
+
+        OurComponent()
+        {
+            infoLabel.setText(CharPointer_UTF8(u8"Set the monitor contrast to the desired “neutral” level."), juce::dontSendNotification);
+            addAndMakeVisible(infoLabel);
+            addAndMakeVisible(propertyPanel);
+            addAndMakeVisible(applyBtn);
+            applyBtn.addListener(this);
+        }
+
+        virtual void buttonClicked (Button*)
+        {
+            auto * userSettings = MonitorControlApplication::getUserSettings();
+            if (!userSettings) return;
+
+            for (int i = 0; i < 100; ++i)
+            {
+                const String monitorName = userSettings->getValue("monitorkey" + String(i));
+                if (monitorName.isEmpty()) break;
+                userSettings->removeValue("monitorkey" + String(i));
+                userSettings->removeValue("monitorRefContrast" + String(i));
+            }
+
+            MonitorControl::Settings mcSettings;
+            int i = 0;
+            for (const auto & m : neutralContrastValues)
+            {
+                const int nc =  m.second.first.getValue();
+                userSettings->setValue("monitorkey" + String(i), m.first.c_str());
+                userSettings->setValue("monitorRefContrast" + String(i), nc);
+                mcSettings.savedNeutralContrast[m.first] = nc;
+                ++i;
+            }
+            MonitorControlApplication::monitorcontrolInstance()->updateSettings(std::move(mcSettings));
+        }
+    };
+
+    juce::OptionalScopedPointer<OurComponent> content(new OurComponent, true);
+    auto & neutralContrastValues = content->neutralContrastValues;
+
+    for (const auto & m : list)
+    {
+        neutralContrastValues[m.name] = {Value(m.neutralContrast), m.maxContrast};
+    }
+    juce::Colour bgColor = MonitorControlApplication::lookAndFeelInstance().findColour(DialogWindow::backgroundColourId);
+
+    juce::Array<PropertyComponent*> properties;
+    for (auto pair : neutralContrastValues)
+    {
+        String jName = CharPointer_UTF16(pair.first.c_str());
+        properties.add(new SliderPropertyComponent(pair.second.first, jName, 0.0, pair.second.second, 1.0));
+    }
+
+    int propertyHeight = 5 + 25 * (int) neutralContrastValues.size();
+    content->propertyPanel.addProperties(properties);
+
+    // layout (depends on amount of values)
+    int y = 0;
+    content->infoLabel.setBounds(0, y, 400, 25);
+    y += 25;
+    content->propertyPanel.setBounds(0, y, 400, propertyHeight);
+    y += propertyHeight;
+    content->applyBtn.setBounds(juce::Rectangle<int>(0, y, 400, 30).withSizeKeepingCentre(120, 24));
+    y += 30;
+    content->setSize(400, y);
+
+    content->applyBtn.addListener(content);
+
+    DialogWindow::LaunchOptions dlo;
+    dlo.dialogTitle = "Monitor neutral contrast";
+    dlo.dialogBackgroundColour = bgColor;
+    dlo.content.setOwned(content.release());
+    dlo.resizable = false;
+    dlo.escapeKeyTriggersCloseButton = true;
+    // use non-native title bar, or else the layout will be wrong
+    dlo.useNativeTitleBar = false;
+
+    dlo.launchAsync();
 }
 
 //==============================================================================

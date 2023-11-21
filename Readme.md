@@ -36,7 +36,9 @@ You can find the standard somewhere, or ask VESA kindly if you can have a copy, 
 us is that code `0x10` sets the brightness, and code `0x12` sets the contrast.
 
 The brightness is always set to the same percentage for all monitors, which may not mean they actually get
-the same brightness, but for now no compensation for that was implemented yet. 
+the same brightness, but for now no compensation for that was implemented yet. For the contrast setting
+you can specify which level counts as ‘neutral’ (i.e. using the full panel brightness, but with no
+clipped highlights).
 
 ## Monitor support
 
