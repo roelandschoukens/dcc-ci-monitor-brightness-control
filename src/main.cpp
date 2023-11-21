@@ -9,6 +9,12 @@ using namespace juce;
 MonitorControl * monitorcontrolInstance();
 
 
+juce::String U8(const char * ch)
+{
+    return juce::CharPointer_UTF8(ch);
+}
+
+
 static int labelWidth(
     Label & label)
 {
@@ -334,18 +340,41 @@ void showInfo()
         if (text.isNotEmpty()) { text << "\n"; }
 
         text << "Monitor: " << m.name.c_str() << "\n";
-        text << "  MCCS version: " << (m.version.empty() ? std::string(u8"—") : m.version) << "\n";
-        text << "  Brightness supported: " << (m.doesBrightness ? "Yes" : "No");
+        text << U8(" • MCCS version: ") << U8(m.version.empty() ? u8"—" : m.version.c_str()) << "\n";
+        text << U8(" • Brightness supported: ") << (m.doesBrightness ? "Yes" : "No");
         if (m.doesBrightness) { text << " (0 - " << m.maxBrightness << ")"; }
         text << "\n";
-        text << "  Contrast supported: " << (m.doesContrast ? "Yes" : "No");
+        text << U8(" • Contrast supported: ") << (m.doesContrast ? "Yes" : "No");
         if (m.doesContrast)
         {
             text << " (0 - " << m.maxContrast << ") / " << m.neutralContrast;
         }
         text << "\n";
     }
-    juce::AlertWindow::showMessageBoxAsync(AlertWindow::NoIcon, "Monitor brightness control", text);
+
+    // drop last \n
+    text = text.dropLastCharacters(1);
+
+    juce::Colour bgColor = MonitorControlApplication::lookAndFeelInstance().findColour(AlertWindow::backgroundColourId);
+    auto editor = std::make_unique<TextEditor>();
+    editor->setMultiLine(true);
+    editor->setScrollbarsShown(false);
+    editor->setSize(500, 500);
+    editor->setFont(juce::Font(16.f));
+    editor->setText(text);
+    editor->moveCaretToTop(false);
+    auto textBounds = editor->getTextBounds(Range<int>(0, editor->getTotalNumChars())).getBounds();
+    auto border = editor->getBorder();
+    editor->setBounds(textBounds.expanded(border.getLeftAndRight() + 4, border.getTopAndBottom() + 4));
+    editor->setReadOnly(true);
+    editor->setColour(TextEditor::backgroundColourId, bgColor);
+
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogBackgroundColour = bgColor;
+    options.content.setOwned(editor.release());
+    options.dialogTitle = "Monitor brightness control";
+    options.useNativeTitleBar = false;
+    options.launchAsync();
 }
 
 
