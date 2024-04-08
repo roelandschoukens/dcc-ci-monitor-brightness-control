@@ -153,26 +153,45 @@ class OurSystemTrayIconComponent : public SystemTrayIconComponent
 public:
     OurSystemTrayIconComponent()
     {
-        float dpiScale = Desktop::getInstance().getGlobalScaleFactor();
+        setIcon(false);
+        setIconTooltip("Monitor brightness control");
+    }
 
+    void onLoad()
+    {
+        setIcon(true);
+    }
+
+    void setIcon(bool finishedLoading)
+    {
         // Get icon.
         // I don't think Windows takes anything else than 16×16 or 32×32, and something is not handling
         // transparency properly so the icons also have either 0 or 100% alpha.
         // Ideally we should of course get a layer directly from our ICO resource but JUCE doesn't expose
         // this functionality.
-        const auto img = (dpiScale <= 1.00f) ?
+        float dpiScale = Desktop::getInstance().getGlobalScaleFactor();
+        auto img = (dpiScale <= 1.00f) ?
             ImageFileFormat::loadFrom(BinaryData::brightness16_png, BinaryData::brightness16_pngSize) :
             ImageFileFormat::loadFrom(BinaryData::brightness32_png, BinaryData::brightness32_pngSize);
 
         const auto templateImg = ImageFileFormat::loadFrom(BinaryData::brightnesssilhouette_png, BinaryData::brightnesssilhouette_pngSize);
 
-        setIconImage(img, templateImg);
+        if (!finishedLoading)
+        {
+            Graphics g(img);
+            g.fillAll(Colour::fromRGBA(128, 128, 128, 160));
+        }
 
-        setIconTooltip("Monitor brightness control");
+        setIconImage(img, templateImg);
     }
 
     virtual void mouseDown(const MouseEvent &e) override
     {
+        if (!monitorcontrolInstance())
+        {
+            return;
+        }
+
         if (e.mods.isPopupMenu())
         {
             PopupMenu m;
@@ -226,26 +245,6 @@ public:
     //==============================================================================
     void initialise (const String&) override
     {
-        PropertiesFile::Options sOptions;
-        sOptions.applicationName = getApplicationName();
-        settings.setStorageParameters(sOptions);
-
-        MonitorControl::Settings mcSettings;
-        auto * userSettings = settings.getUserSettings();
-        if (userSettings)
-        {
-            for (int i = 0; i < 100; ++i)
-            {
-                const String monitorName = userSettings->getValue("monitorkey" + String(i));
-                if (monitorName.isEmpty()) break;
-
-                const int refContrast = userSettings->getIntValue("monitorRefContrast" + String(i));
-                mcSettings.savedNeutralContrast[monitorName.toUTF16().getAddress()] = refContrast;
-            }
-        }
-
-        monitorcontrol.reset(MonitorControl::create(std::move(mcSettings)));
-
         // look-and-feel (use the light one)
         lookAndFeel = std::make_unique<LookAndFeel_V3>();
         lookAndFeel->setDefaultSansSerifTypefaceName("Segoe UI");
@@ -271,6 +270,31 @@ public:
         LookAndFeel::setDefaultLookAndFeel(lookAndFeel.get());
 
         icon = std::make_unique<OurSystemTrayIconComponent>();
+
+        // asynchronously start our monitor control instance
+
+        MessageManager::callAsync([this](){
+                PropertiesFile::Options sOptions;
+                sOptions.applicationName = getApplicationName();
+                settings.setStorageParameters(sOptions);
+
+                MonitorControl::Settings mcSettings;
+                auto * userSettings = settings.getUserSettings();
+                if (userSettings)
+                {
+                    for (int i = 0; i < 100; ++i)
+                    {
+                        const String monitorName = userSettings->getValue("monitorkey" + String(i));
+                        if (monitorName.isEmpty()) break;
+
+                        const int refContrast = userSettings->getIntValue("monitorRefContrast" + String(i));
+                        mcSettings.savedNeutralContrast[monitorName.toUTF16().getAddress()] = refContrast;
+                    }
+                }
+
+                monitorcontrol.reset(MonitorControl::create(std::move(mcSettings)));
+                icon->onLoad();
+            });
     }
 
     void shutdown() override
@@ -334,12 +358,25 @@ void showInfo()
 {
     auto * mc = monitorcontrolInstance();
     auto list = mc->monitorList();
-    juce::String text;
+    juce::Colour bgColor = MonitorControlApplication::lookAndFeelInstance().findColour(AlertWindow::backgroundColourId);
+
+    auto editor = std::make_unique<TextEditor>();
+    editor->setMultiLine(true);
+    editor->setScrollbarsShown(false);
+    editor->setSize(500, 500);
+    Font font(16.f);
+    Font boldFont = font.boldened();
+    editor->setFont(font);
+
     for (const auto & m : list)
     {
-        if (text.isNotEmpty()) { text << "\n"; }
+        if (!editor->isEmpty()) { editor->insertTextAtCaret("\n"); }
 
-        text << "Monitor: " << m.name.c_str() << "\n";
+        editor->setFont(boldFont);
+        editor->insertTextAtCaret(m.name.c_str());
+        editor->insertTextAtCaret("\n");
+
+        juce::String text;
         text << U8(" • MCCS version: ") << U8(m.version.empty() ? u8"—" : m.version.c_str()) << "\n";
         text << U8(" • Brightness supported: ") << (m.doesBrightness ? "Yes" : "No");
         if (m.doesBrightness) { text << " (0 - " << m.maxBrightness << ")"; }
@@ -350,24 +387,18 @@ void showInfo()
             text << " (0 - " << m.maxContrast << ") / " << m.neutralContrast;
         }
         text << "\n";
+        editor->setFont(font);
+        editor->insertTextAtCaret(juce::String(text));
     }
 
-    // drop last \n
-    text = text.dropLastCharacters(1);
-
-    juce::Colour bgColor = MonitorControlApplication::lookAndFeelInstance().findColour(AlertWindow::backgroundColourId);
-    auto editor = std::make_unique<TextEditor>();
-    editor->setMultiLine(true);
-    editor->setScrollbarsShown(false);
-    editor->setSize(500, 500);
-    editor->setFont(juce::Font(16.f));
-    editor->setText(text);
     editor->moveCaretToTop(false);
+    editor->setReadOnly(true);
+    editor->setColour(TextEditor::backgroundColourId, bgColor);
+
+    // get text bounds so we can size our window properly
     auto textBounds = editor->getTextBounds(Range<int>(0, editor->getTotalNumChars())).getBounds();
     auto border = editor->getBorder();
     editor->setBounds(textBounds.expanded(border.getLeftAndRight() + 4, border.getTopAndBottom() + 4));
-    editor->setReadOnly(true);
-    editor->setColour(TextEditor::backgroundColourId, bgColor);
 
     juce::DialogWindow::LaunchOptions options;
     options.dialogBackgroundColour = bgColor;
