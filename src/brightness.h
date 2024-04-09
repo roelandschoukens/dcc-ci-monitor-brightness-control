@@ -29,6 +29,8 @@ public:
     static MonitorControl * create(Settings && settings);
     virtual ~MonitorControl();
 
+    virtual bool hasAnySupportedMonitors() const = 0;
+
     virtual float getBrightness() = 0;
     virtual void setBrightness(float v) = 0;
 

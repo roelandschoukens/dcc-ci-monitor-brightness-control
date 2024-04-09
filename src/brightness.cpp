@@ -47,6 +47,15 @@ public:
         settings(std::move(savedSettings))
     {}
 
+    virtual bool hasAnySupportedMonitors() const override
+    {
+        for (const auto& m : monitors)
+        {
+            if (m.second.doesBrightness) return true;
+        }
+        return false;
+    }
+
     virtual float getBrightness() override
     {
         return brightness;

@@ -159,7 +159,7 @@ public:
 
     void onLoad()
     {
-        setIcon(true);
+        setIcon(monitorcontrolInstance()->hasAnySupportedMonitors());
     }
 
     void setIcon(bool finishedLoading)
@@ -178,8 +178,7 @@ public:
 
         if (!finishedLoading)
         {
-            Graphics g(img);
-            g.fillAll(Colour::fromRGBA(128, 128, 128, 160));
+            img.multiplyAllAlphas(.7f);
         }
 
         setIconImage(img, templateImg);
@@ -187,6 +186,7 @@ public:
 
     virtual void mouseDown(const MouseEvent &e) override
     {
+        bool supported = monitorcontrolInstance()->hasAnySupportedMonitors();
         if (!monitorcontrolInstance())
         {
             return;
@@ -196,7 +196,7 @@ public:
         {
             PopupMenu m;
             m.addItem(1, "Info");
-            m.addItem(2, "Edit neutral contrast");
+            m.addItem(2, "Edit neutral contrast", supported);
             m.addSeparator();
             m.addItem(9, "Exit");
             m.showMenuAsync(PopupMenu::Options(), [](int result)
@@ -220,7 +220,18 @@ public:
         }
         else
         {
-            auto content = std::make_unique<OurCalloutContent>();
+            std::unique_ptr<Component> content;
+            if (supported) {
+                content = std::make_unique<OurCalloutContent>();
+            }
+            else {
+                auto label = std::make_unique<Label>("", "No supported monitors");
+                label->setBorderSize(BorderSize<int>(10));
+                label->setSize(
+                    30 + label->getFont().getStringWidth(label->getText()),
+                    22 + (int) label->getFont().getHeight());
+                content = std::move(label);
+            }
             const auto pos = e.source.getScreenPosition().roundToInt();
             juce::Rectangle<int> mouseRect(pos.x, pos.y, 1, 1);
             CallOutBox& myBox
@@ -397,6 +408,7 @@ void showInfo()
 
     // get text bounds so we can size our window properly
     auto textBounds = editor->getTextBounds(Range<int>(0, editor->getTotalNumChars())).getBounds();
+    textBounds.setWidth(std::max(300, textBounds.getWidth()));
     auto border = editor->getBorder();
     editor->setBounds(textBounds.expanded(border.getLeftAndRight() + 4, border.getTopAndBottom() + 4));
 
