@@ -48,7 +48,8 @@ static String percentText(double value)
 
 
 class OurCalloutContent : public Component,
-    Slider::Listener, Button::Listener
+    Slider::Listener, Button::Listener,
+    Timer
 {
 public:
     OurCalloutContent()
@@ -130,21 +131,37 @@ public:
             contrastValueLabel.setText(percentText(contrastSlider.getValue()), dontSendNotification);
             repaint();
         }
+        if (updateBrightness || updateContrast) {
+            // the first settings update is immediate, but later ones are
+            // throttled by a timer to 4 per second.
+            if (!isTimerRunning()) {
+                doSettings();
+                startTimer(250);
+            }
+        }
     }
 
-    void paint(juce::Graphics &) override
+    void timerCallback() override
     {
-        // Updating monitor settings takes longer than the time between two mouse events.
-        // So updating this during the mouse events will saturate the event loop and prevent
-        // WM_PAINT being generated. Deferring until we reach the paint call makes it so
-        // the GUI doesn't appear blocked, without incurring the complexity of a separate
-        // thread.
+        if (updateBrightness || updateContrast) {
+            // update was requested, apply updates and do another tick
+            doSettings();
+        }
+        else {
+            // no updates since the last tick, stop timer
+            stopTimer();
+        }
+    }
+
+    void doSettings()
+    {
         if (updateBrightness) {
-            monitorcontrolInstance()->setBrightness((float) brightnessSlider.getValue());
+            monitorcontrolInstance()->setBrightness((float)brightnessSlider.getValue());
         }
         if (updateContrast) {
-            monitorcontrolInstance()->setContrast((float) contrastSlider.getValue());
+            monitorcontrolInstance()->setContrast((float)contrastSlider.getValue());
         }
+
         updateBrightness = false;
         updateContrast = false;
     }
