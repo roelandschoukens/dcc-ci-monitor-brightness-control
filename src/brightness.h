@@ -1,3 +1,10 @@
+/*
+©2024 Roeland Schoukens
+
+The brightness.cpp / .h files do not depend on JUCE, these
+two files are available under GPLv3 and the MIT license.
+*/
+
 #pragma once
 
 #include <string>
